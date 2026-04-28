@@ -28,6 +28,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class Insight(BaseModel):
@@ -61,8 +62,10 @@ DO NOT wrap your answer in markdown code fences.
 DO NOT include chain-of-thought, explanations, or any text outside the JSON object.
 
 LANGUAGE:
-Write the report in the same language as the input data.
-If the data is in Portuguese, write in Brazilian Portuguese.
+Always write the final report in Brazilian Portuguese, even when column names,
+raw comments, product terms, or examples are in English.
+Keep product names, feature names, and technical terms as written in the data,
+but explain findings, evidence, anomalies, and recommendations in Portuguese.
 
 REQUIRED FIELDS:
 - summary: a STRING with 3-5 executive sentences. NEVER a dict or object.
@@ -492,7 +495,7 @@ User-provided context: {context_info if context_info else "General UX/usability 
 {data_str}
 
 Instructions:
-- Generate 5-8 UX insights in the same language as the data (Portuguese if data is in Portuguese).
+- Generate the full report in Brazilian Portuguese.
 - Each insight must have a clear finding about the user experience, concrete evidence from the data, and a detailed actionable recommendation.
 - Use column names, percentages, means, and textual examples as evidence.
 - Do NOT create insights about demographic or metadata columns.
@@ -501,7 +504,7 @@ Instructions:
         attempt_prompts = [user_message]
         retry_message = (
             user_message
-            + "\n\nA resposta anterior foi invalida. Retorne SOMENTE um JSON valido, em portugues, com as chaves: "
+            + "\n\nA resposta anterior foi invalida. Retorne SOMENTE um JSON valido, totalmente em portugues do Brasil, com as chaves: "
             "summary (string), key_insights (lista com 5 a 8 objetos), anomalies (lista de strings), overall_score (inteiro 1-10). "
             "Nao use markdown, nao use schema, nao explique o raciocinio."
         )
@@ -527,9 +530,23 @@ Instructions:
                 )
                 response_text = self._get_response_text(response)
                 json_data = self._extract_json_object(response_text)
+                logger.debug(
+                    "Raw LLM JSON keys=%s insights_type=%s insights_len=%s",
+                    list(json_data.keys()),
+                    type(json_data.get("key_insights")).__name__,
+                    len(json_data.get("key_insights", [])) if isinstance(json_data.get("key_insights"), list) else "n/a",
+                )
                 json_data = self._normalize_llm_output(json_data)
+                if not json_data.get("key_insights"):
+                    raise ValueError(
+                        f"LLM returned zero usable insights. Raw keys: {list(json_data.keys())}"
+                    )
                 report = DataAnalysisReport(**json_data)
-                logger.info("Analysis report generated successfully")
+                logger.info(
+                    "Analysis report generated successfully (%d insights, score=%s)",
+                    len(report.key_insights),
+                    report.overall_score,
+                )
                 return report
             except Exception as exc:
                 last_error = exc
@@ -539,27 +556,133 @@ Instructions:
         return self._build_fallback_report(clean_df, context_info, last_error)
 
     @staticmethod
+    def _infer_insight_category(text: str) -> str:
+        lower = text.lower()
+        if any(token in lower for token in ("confian", "seguran", "risco", "rollback")):
+            return "Confianca do usuario"
+        if any(token in lower for token in ("dificuldade", "fric", "confus", "erro", "falha", "abandon")):
+            return "Friccao de uso"
+        if any(token in lower for token in ("satisf", "nota", "escala", "avali")):
+            return "Avaliacao de usabilidade"
+        if any(token in lower for token in ("tempo", "demor", "eficien", "rapidez")):
+            return "Eficiencia do fluxo"
+        if any(token in lower for token in ("interface", "icone", "ícone", "tela", "visual")):
+            return "Clareza da interface"
+        if any(token in lower for token in ("coment", "feedback", "sugest", "entrevista")):
+            return "Feedback qualitativo"
+        return "Insight UX"
+
+    @staticmethod
+    def _looks_english(text: str) -> bool:
+        lower = f" {text.lower()} "
+        english_hits = sum(
+            token in lower
+            for token in (
+                " the ", " users ", " user ", " data ", " shows ", " main ",
+                " issues ", " struggle ", " mentioned ", " difficulty ",
+                " suggested ", " section ", " screen ", " generally ",
+            )
+        )
+        portuguese_hits = sum(
+            token in lower
+            for token in (
+                " os ", " as ", " usuários ", " usuarios ", " dados ",
+                " participantes ", " dificuldade ", " recomenda ", " análise ",
+                " analise ", " experiência ", " experiencia ",
+            )
+        )
+        return english_hits >= 2 and english_hits > portuguese_hits
+
+    @staticmethod
+    def _build_portuguese_summary_from_insights(data: Dict[str, Any]) -> str:
+        insights = data.get("key_insights") or []
+        count = len(insights) if isinstance(insights, list) else 0
+        categories = []
+        if isinstance(insights, list):
+            for insight in insights[:3]:
+                if isinstance(insight, dict) and insight.get("category"):
+                    categories.append(str(insight["category"]))
+        category_text = ", ".join(dict.fromkeys(categories)) if categories else "clareza, confianca e eficiencia"
+        signal_text = "1 sinal relevante" if count == 1 else f"{count} sinais relevantes"
+        return (
+            f"A analise identificou {signal_text} para UX nos dados fornecidos. "
+            f"Os principais temas observados envolvem {category_text}, com oportunidades de reduzir friccao, "
+            "melhorar a compreensao do fluxo e apoiar decisoes de melhoria do produto. "
+            "As recomendacoes devem ser priorizadas conforme impacto na jornada e recorrencia das evidencias."
+        )
+
+    @staticmethod
     def _normalize_llm_output(data: Dict[str, Any]) -> Dict[str, Any]:
         """Fix common LLM output deviations before Pydantic validation."""
+        if not data.get("summary"):
+            for alias in ("resumo", "executive_summary", "sintese", "síntese"):
+                if data.get(alias):
+                    data["summary"] = data[alias]
+                    break
+
         if isinstance(data.get("summary"), dict):
             data["summary"] = json.dumps(data["summary"], ensure_ascii=False)
 
+        if not data.get("key_insights"):
+            for alias in ("insights", "findings", "principais_insights", "descobertas"):
+                if data.get(alias):
+                    data["key_insights"] = data[alias]
+                    break
+
         if isinstance(data.get("key_insights"), dict):
-            data["key_insights"] = [data["key_insights"]]
+            # e.g. {"insight1": {...}, "insight2": {...}} → list of values
+            inner = data["key_insights"]
+            if all(isinstance(v, dict) for v in inner.values()):
+                data["key_insights"] = list(inner.values())
+            else:
+                data["key_insights"] = [inner]
 
         if isinstance(data.get("key_insights"), list):
-            data["key_insights"] = [
-                insight for insight in data["key_insights"] if isinstance(insight, dict)
-            ]
+            coerced = []
+            for item in data["key_insights"]:
+                if isinstance(item, dict):
+                    coerced.append(item)
+                elif isinstance(item, str) and item.strip():
+                    # LLM returned a plain string — wrap it as a minimal insight dict
+                    text = item.strip()
+                    coerced.append({
+                        "category": UXExcelAnalyzer._infer_insight_category(text),
+                        "finding": text,
+                        "evidence": text[:220],
+                        "severity": "Medium",
+                        "recommendation": "Validar este ponto com os dados detalhados e transformar em melhoria priorizada no backlog de UX.",
+                    })
+            data["key_insights"] = coerced
             for insight in data["key_insights"]:
                 if isinstance(insight, dict):
                     # Common alternative output from local models.
                     if "insight" in insight and "finding" not in insight:
                         insight["finding"] = str(insight.get("insight"))
+                    if "description" in insight and "finding" not in insight:
+                        insight["finding"] = str(insight.get("description"))
+                    if "descricao" in insight and "finding" not in insight:
+                        insight["finding"] = str(insight.get("descricao"))
+                    if "descoberta" in insight and "finding" not in insight:
+                        insight["finding"] = str(insight.get("descoberta"))
                     if "source" in insight and "evidence" not in insight:
                         insight["evidence"] = f"Source: {insight.get('source')}"
+                    if "evidencia" in insight and "evidence" not in insight:
+                        insight["evidence"] = str(insight.get("evidencia"))
+                    if "recommendation" not in insight:
+                        for alias in ("recommendation", "recomendacao", "recomendação", "action", "acao", "ação"):
+                            if insight.get(alias):
+                                insight["recommendation"] = str(insight.get(alias))
+                                break
+                    if "finding" not in insight:
+                        insight["finding"] = "O modelo retornou um insight sem descoberta estruturada."
                     if "category" not in insight:
-                        insight["category"] = "General"
+                        inferred_text = str(insight.get("finding") or insight.get("description") or "")
+                        insight["category"] = str(
+                            insight.get("categoria")
+                            or UXExcelAnalyzer._infer_insight_category(inferred_text)
+                        )
+                    if "evidence" not in insight:
+                        insight["evidence"] = "O modelo nao estruturou a evidencia; validar contra os dados carregados."
                     if "severity" not in insight:
                         insight["severity"] = "Medium"
                     if "recommendation" not in insight:
@@ -633,17 +756,18 @@ Instructions:
         except (TypeError, ValueError):
             data["overall_score"] = 5
         if not data.get("key_insights"):
-            data["key_insights"] = [
-                {
-                    "category": "Qualidade da resposta",
-                    "finding": "O modelo nao retornou insights estruturados no formato esperado.",
-                    "evidence": "A validacao local precisou completar a resposta da IA.",
-                    "severity": "Medium",
-                    "recommendation": "Tentar novamente com um contexto mais especifico ou uma amostra mais compacta.",
-                }
-            ]
+            data["key_insights"] = []
         if "summary" not in data or not isinstance(data.get("summary"), str):
-            data["summary"] = "A analise foi normalizada automaticamente porque a resposta da IA veio incompleta."
+            insights = data.get("key_insights") or []
+            count = len(insights) if isinstance(insights, list) else 0
+            data["summary"] = (
+                f"A analise identificou {count} sinais relevantes para UX a partir dos dados fornecidos. "
+                "Os principais pontos indicam oportunidades de melhorar clareza, confianca e eficiencia do fluxo. "
+                "As recomendacoes devem ser validadas contra as evidencias detalhadas e priorizadas conforme impacto no usuario."
+            )
+        elif UXExcelAnalyzer._looks_english(data["summary"]):
+            logger.warning("LLM returned English summary; replacing with Portuguese summary.")
+            data["summary"] = UXExcelAnalyzer._build_portuguese_summary_from_insights(data)
 
         return data
 
