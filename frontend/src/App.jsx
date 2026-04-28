@@ -35,9 +35,25 @@ function AppContent() {
   const [error, setError] = useState(null);
   const [visType, setVisType] = useState('auto');
 
-  // Health check on mount
+  // Health check on mount and after backend/Ollama restarts
   useEffect(() => {
-    healthCheck().then(r => setOllamaOk(r.ollama_connected)).catch(() => setOllamaOk(false));
+    let cancelled = false;
+    const checkOllama = () => {
+      healthCheck()
+        .then(r => {
+          if (!cancelled) setOllamaOk(Boolean(r.ollama_connected && (r.model_available ?? true)));
+        })
+        .catch(() => {
+          if (!cancelled) setOllamaOk(false);
+        });
+    };
+
+    checkOllama();
+    const interval = window.setInterval(checkOllama, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   // Handle file upload

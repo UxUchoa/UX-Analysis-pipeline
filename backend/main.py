@@ -66,7 +66,7 @@ _state: dict[str, Any] = {
     "filename": None,
 }
 
-_analyzer = UXExcelAnalyzer(model_name="qwen2.5")
+_analyzer = UXExcelAnalyzer(model_name="qwen3:4b")
 
 
 # ---------------------------------------------------------------------------
@@ -116,10 +116,31 @@ def _get_question_cols(df: pd.DataFrame, metadata_cols: list[str]) -> list[str]:
 @app.get("/api/health")
 async def health_check():
     """Health check — tests Ollama connection."""
-    ollama_ok = _analyzer.client is not None
+    ollama_ok = False
+    model_available = False
+
+    if _analyzer.client is not None:
+        try:
+            models_response = _analyzer.client.list()
+            model_names = {
+                getattr(model, "model", "")
+                for model in getattr(models_response, "models", [])
+            }
+            requested_model = _analyzer.model_name
+            requested_latest = (
+                requested_model if ":" in requested_model else f"{requested_model}:latest"
+            )
+            ollama_ok = True
+            model_available = (
+                requested_model in model_names or requested_latest in model_names
+            )
+        except Exception as exc:
+            logger.warning("Ollama health check failed: %s", exc)
+
     return {
         "status": "ok",
         "ollama_connected": ollama_ok,
+        "model_available": model_available,
         "model": _analyzer.model_name,
     }
 
