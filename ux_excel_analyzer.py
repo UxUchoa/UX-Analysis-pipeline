@@ -50,47 +50,76 @@ class DataAnalysisReport(BaseModel):
     analysis_timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
-SYSTEM_PROMPT_EXCEL_ANALYZER = """Voce e um pesquisador senior de UX e analista de dados.
+SYSTEM_PROMPT_EXCEL_ANALYZER = """You are a Senior UX Researcher and Data Analyst.
 
-Sua tarefa e transformar dados tabulares de testes de usabilidade, entrevistas ou pesquisas em uma analise executiva em portugues.
-Responda SEMPRE em portugues do Brasil.
-Retorne SOMENTE um objeto JSON valido. Nao use markdown, nao explique o schema e nao escreva texto fora do JSON.
+YOUR TASK:
+Analyze the provided tabular data from usability testing sessions, context interviews, or UX surveys
+and generate a comprehensive, structured UX analysis report.
+Return ONLY a valid JSON object matching the schema below.
+DO NOT return the schema description. RETURN THE ACTUAL VALUES, not types.
+DO NOT wrap your answer in markdown code fences.
+DO NOT include chain-of-thought, explanations, or any text outside the JSON object.
 
-Campos obrigatorios:
-- summary: string com 3 a 5 frases, objetiva e executiva.
-- key_insights: lista com 5 a 8 insights.
-- anomalies: lista de strings com alertas, contradicoes ou pontos fora do padrao.
-- overall_score: inteiro de 1 a 10.
+LANGUAGE:
+Write the report in the same language as the input data.
+If the data is in Portuguese, write in Brazilian Portuguese.
 
-Cada insight deve ter:
-- category: tema curto em portugues.
-- finding: descoberta clara, especifica e nao generica.
-- evidence: evidencia concreta usando nome de coluna, contagem, percentual, media, valor observado ou exemplo textual dos dados.
-- severity: Low, Medium, High ou Critical.
-- recommendation: recomendacao detalhada, acionavel e conectada a descoberta.
+REQUIRED FIELDS:
+- summary: a STRING with 3-5 executive sentences. NEVER a dict or object.
+- key_insights: a LIST of 5-8 insight objects.
+- anomalies: a LIST of short strings describing contradictions, outliers, or unexpected patterns.
+- overall_score: an INTEGER between 1 and 10 reflecting overall UX quality observed.
 
-Regras de qualidade:
-- Baseie tudo apenas nos dados fornecidos.
-- Nao invente numeros, quotes ou conclusoes sem evidencia.
-- Prefira descobertas com impacto em UX: friccao, confusao, confianca, abandono, sucesso de tarefa, satisfacao, tempo, temas recorrentes e oportunidades de melhoria.
-- Se houver poucas linhas, ainda extraia padroes, riscos e hipoteses claramente marcadas como baseadas na amostra.
-- Evite frases genericas como "revisar os dados"; diga exatamente o que revisar e por que.
+Each insight must be an object with these string fields:
+- category
+- finding
+- evidence
+- severity (Low, Medium, High, or Critical)
+- recommendation
 
-Formato esperado:
+WHAT COUNTS AS A UX INSIGHT (focus on these):
+- Satisfaction, confidence, or ease-of-use scores that are below expectations (scale columns).
+- Tasks or steps where users failed, struggled, or abandoned.
+- Qualitative feedback describing confusion, friction, missing information, or unmet expectations.
+- Patterns in open-ended comments that reveal mental models, pain points, or workarounds.
+- Gaps between user expectations and the system's actual behavior.
+- Learnability issues: users who needed help, took longer, or had to retry.
+- Trust or safety concerns expressed about the product.
+
+WHAT IS NOT A UX INSIGHT (do NOT generate insights from these):
+- Demographic columns (gender, age, city, job title, education).
+- Metadata columns (respondent name, email, interview date, interviewer name, ID, row number).
+- Administrative columns (who did the data entry, session code, form number).
+
+QUALITY BAR:
+- Each finding must explain what the pattern means for the user experience, not just describe the data.
+- Each evidence field must cite the column name plus a concrete value: count, percentage, mean, scale score, or textual example.
+- Each recommendation must be specific and actionable: say what to redesign, test, investigate, or prioritize.
+- If the sample is small, flag it but still extract directional insights.
+
+HALLUCINATION PREVENTION:
+- Base every insight strictly on the data provided.
+- Do not invent numbers, quotes, tasks, participants, or product features.
+- Do not infer demographics or motivations unless directly supported by the data.
+
+CORRECT EXAMPLE OUTPUT (copy the structure, not the content):
 {
-  "summary": "Resumo executivo em portugues...",
+  "summary": "Os participantes relataram baixa confianca ao lidar com rotinas criticas e dificuldade em localizar acoes principais. Os sinais de friccao se concentram nas etapas de maior complexidade e nas telas com baixo feedback do sistema. A prioridade de UX deve ser aumentar a clareza das proximas etapas, adicionar confirmacoes visuais e validar os fluxos criticos com nova rodada de teste.",
   "key_insights": [
     {
-      "category": "Tema",
-      "finding": "Descoberta especifica.",
-      "evidence": "Evidencia concreta dos dados.",
+      "category": "Confianca do usuario",
+      "finding": "Participantes demonstram inseguranca ao executar rotinas criticas, o que pode levar a abandono ou erros nao reportados.",
+      "evidence": "4 de 8 participantes mencionaram receio de automatizar rotinas core na coluna 'Comentario'; media de confianca na coluna 'Escala de confianca' foi 2.8 de 5.",
       "severity": "High",
-      "recommendation": "Recomendacao detalhada e acionavel."
+      "recommendation": "Adicionar indicadores de risco, mensagens de confirmacao e resumo da acao antes de concluir rotinas criticas. Testar em nova rodada se esses elementos reduzem o abandono sem adicionar friccao."
     }
   ],
-  "anomalies": ["Alerta ou contradicao observada."],
+  "anomalies": ["Dois participantes relataram alta satisfacao mesmo apresentando dificuldades na rastreabilidade."],
   "overall_score": 6
-}"""
+}
+
+CRITICAL: Return ONLY a single valid JSON object with REAL values. No markdown. No extra text.
+If the data is qualitative interview text, still return the same JSON structure summarizing the main UX themes."""
 
 
 class UXExcelAnalyzer:
@@ -217,10 +246,26 @@ class UXExcelAnalyzer:
 
     @staticmethod
     def _get_response_text(response: Any) -> str:
-        """Read Ollama responses across dict-like and typed client versions."""
+        """Read Ollama responses across dict-like and typed client versions.
+
+        Qwen3 with thinking enabled puts output in 'thinking' and leaves
+        'response' empty. We always pass think=False, but guard against it anyway.
+        """
         if isinstance(response, dict):
-            return str(response.get("response", "")).strip()
-        return str(getattr(response, "response", "")).strip()
+            text = str(response.get("response", "") or "").strip()
+            if not text:
+                text = str(response.get("thinking", "") or "").strip()
+            return text
+
+        text = str(getattr(response, "response", "") or "").strip()
+        if not text:
+            text = str(getattr(response, "thinking", "") or "").strip()
+            if text:
+                logger.warning(
+                    "LLM response was empty but 'thinking' field had content "
+                    "(think=False may not have been respected). Falling back to thinking content."
+                )
+        return text
 
     @staticmethod
     def _strip_response_noise(text: str) -> str:
@@ -263,45 +308,136 @@ class UXExcelAnalyzer:
 
         raise ValueError(f"A resposta da LLM contem JSON incompleto: {cleaned[:180]}")
 
-    @staticmethod
-    def _build_data_observations(df: pd.DataFrame) -> str:
-        """Create deterministic signals to anchor the LLM in real evidence."""
-        rows, cols = len(df), len(df.columns)
-        lines: List[str] = [
-            "--- OBSERVACOES DETERMINISTICAS PARA USAR COMO EVIDENCIA ---",
-            f"- Amostra analisada: {rows} linhas e {cols} colunas.",
-        ]
+    # -----------------------------------------------------------------------
+    # Column classification
+    # -----------------------------------------------------------------------
 
-        if rows and cols:
-            missing_pct = df.isna().sum().sum() / (rows * cols) * 100
-            lines.append(f"- Dados ausentes no total: {missing_pct:.1f}%.")
+    _DEMO_TOKENS = frozenset({
+        "sexo", "genero", "gênero", "idade", "escolaridade", "estado civil",
+        "estadocivil", "cidade", "bairro", "cep", "nascimento", "profissao",
+        "profissão", "cargo", "formacao", "formação", "raca", "raça",
+        "etnia", "estado", "regiao", "região",
+    })
+    _META_TOKENS = frozenset({
+        "responsavel", "responsável", "tabulacao", "tabulação", "entrevistador",
+        "data da entrevista", "data de coleta", "data de", "codigo", "código",
+        "id", "nome", "email", "telefone", "empresa", "organização", "organizacao",
+        "sessao", "sessão", "numero", "número", "timestamp", "horario", "horário",
+    })
+    _SCALE_TOKENS = frozenset({
+        "escala", "nota", "satisfacao", "satisfação", "nps", "likert",
+        "avaliacao", "avaliação", "rating", "score", "pontuacao", "pontuação",
+        "confianca", "confiança", "facilidade", "clareza", "qualidade",
+        "usabilidade", "utilidade", "eficiencia", "eficiência", "dificuldade",
+        "1 a 5", "1 a 10", "0 a 10", "de 1 a", "de 0 a",
+    })
+    _TASK_TOKENS = frozenset({
+        "tarefa", "task", "status", "resultado", "conclusao", "conclusão",
+        "sucesso", "falha", "execucao", "execução", "tempo", "duracao",
+        "duração", "tentativas", "etapa", "fluxo", "passo",
+    })
+    _FEEDBACK_TOKENS = frozenset({
+        "comentario", "comentário", "observacao", "observação", "sugestao",
+        "sugestão", "motivo", "porque", "por que", "explique", "descreva",
+        "feedback", "opiniao", "opinião", "diga", "relate", "desafio",
+        "dificuldade", "dificultou", "problema", "melhoria", "o que",
+        "conte", "relato", "quais", "como foi", "como voce", "como você",
+        "fale sobre", "experiencia", "experiência",
+    })
+
+    @classmethod
+    def _classify_column(cls, col: str) -> str:
+        """Return column type: 'scale', 'task', 'feedback', 'demo', 'meta', or 'other'.
+
+        UX-signal types are checked first so that short demographic tokens like
+        'idade' don't accidentally match inside words like 'necessidades'.
+        """
+        normalized = col.lower().strip()
+        if any(token in normalized for token in cls._SCALE_TOKENS):
+            return "scale"
+        if any(token in normalized for token in cls._TASK_TOKENS):
+            return "task"
+        if any(token in normalized for token in cls._FEEDBACK_TOKENS):
+            return "feedback"
+        if any(token in normalized for token in cls._DEMO_TOKENS):
+            return "demo"
+        if any(token in normalized for token in cls._META_TOKENS):
+            return "meta"
+        return "other"
+
+    @classmethod
+    def _split_columns_by_type(cls, df: pd.DataFrame) -> Dict[str, List[str]]:
+        buckets: Dict[str, List[str]] = {
+            "demo": [], "meta": [], "scale": [], "task": [], "feedback": [], "other": []
+        }
+        for col in df.columns:
+            buckets[cls._classify_column(col)].append(col)
+        return buckets
+
+    # -----------------------------------------------------------------------
+    # Deterministic observations for LLM anchoring
+    # -----------------------------------------------------------------------
+
+    @classmethod
+    def _build_data_observations(cls, df: pd.DataFrame) -> str:
+        """Create UX-focused deterministic signals to anchor the LLM in real evidence."""
+        rows, cols_n = len(df), len(df.columns)
+        lines: List[str] = [
+            "--- UX-RELEVANT OBSERVATIONS (use as evidence anchors) ---",
+            f"- Sample: {rows} records, {cols_n} columns.",
+        ]
+        if rows and cols_n:
+            missing_pct = df.isna().sum().sum() / (rows * cols_n) * 100
+            lines.append(f"- Overall missing data: {missing_pct:.1f}%.")
+
+        buckets = cls._split_columns_by_type(df)
 
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        for col in numeric_cols[:8]:
-            values = df[col].dropna()
-            if values.empty:
-                continue
-            lines.append(
-                f"- Coluna numerica '{col}': media={values.mean():.2f}, mediana={values.median():.2f}, "
-                f"min={values.min()}, max={values.max()}."
-            )
-
-        text_cols = df.select_dtypes(include=["object", "string", "category", "bool"]).columns.tolist()
-        for col in text_cols[:14]:
-            values = df[col].dropna().astype(str).map(str.strip)
-            values = values[~values.str.lower().isin({"", "nan", "none", "null", "n/a", "na"})]
-            if values.empty:
-                continue
-            counts = values.value_counts()
-            if counts.size <= 15:
-                top = ", ".join(
-                    f"{str(label)[:70]}={int(count)} ({count / len(values) * 100:.1f}%)"
-                    for label, count in counts.head(5).items()
+        ux_numeric = [
+            col for col in numeric_cols
+            if cls._classify_column(col) not in ("demo", "meta")
+        ]
+        if ux_numeric:
+            lines.append("- UX numeric signals:")
+            for col in ux_numeric[:10]:
+                values = df[col].dropna()
+                if values.empty:
+                    continue
+                col_type = cls._classify_column(col)
+                hint = " [escala de avaliacao]" if col_type == "scale" else ""
+                lines.append(
+                    f"  * '{col}'{hint}: mean={values.mean():.2f}, median={values.median():.2f}, "
+                    f"min={values.min()}, max={values.max()}."
                 )
-                lines.append(f"- Distribuicao em '{col}' ({len(values)} respostas validas): {top}.")
-            else:
-                examples = " | ".join(values.head(3).map(lambda item: item[:140]).tolist())
-                lines.append(f"- Campo aberto '{col}' tem {len(values)} respostas. Exemplos: {examples}.")
+
+        for bucket_key, label in (
+            ("task", "Task/status columns"),
+            ("scale", "Evaluation scale columns"),
+            ("feedback", "Open feedback columns"),
+            ("other", "Other columns"),
+        ):
+            for col in buckets[bucket_key][:10]:
+                values = df[col].dropna().astype(str).map(str.strip)
+                values = values[~values.str.lower().isin({"", "nan", "none", "null", "n/a", "na"})]
+                if values.empty:
+                    continue
+                counts = values.value_counts()
+                if counts.size <= 15:
+                    top = ", ".join(
+                        f"{str(lbl)[:70]}={int(cnt)} ({cnt / len(values) * 100:.1f}%)"
+                        for lbl, cnt in counts.head(5).items()
+                    )
+                    lines.append(f"- [{label}] '{col}' ({len(values)} valid): {top}.")
+                else:
+                    examples = " | ".join(values.head(3).map(lambda item: item[:130]).tolist())
+                    lines.append(f"- [{label}] '{col}': {len(values)} open responses. Examples: {examples}.")
+
+        if buckets["demo"] or buckets["meta"]:
+            lines.append(
+                "- CONTEXT ONLY (do NOT generate UX insights from these): "
+                + ", ".join(f"'{c}'" for c in buckets["demo"] + buckets["meta"])
+                + "."
+            )
 
         return "\n".join(lines)
 
@@ -329,21 +465,38 @@ class UXExcelAnalyzer:
             max_prompt_chars=10000 if is_qualitative else 14000,
         )
         observations = self._build_data_observations(clean_df)
-        user_message = f"""Analise os dados abaixo como um pesquisador senior de UX.
+        buckets = self._split_columns_by_type(clean_df)
+        demo_meta_note = ""
+        skip_cols = buckets["demo"] + buckets["meta"]
+        if skip_cols:
+            demo_meta_note = (
+                "\n\nCOLUNAS DEMOGRAFICAS / METADADOS (use apenas como contexto, NAO gere insights a partir delas):\n"
+                + ", ".join(f"'{c}'" for c in skip_cols)
+            )
+        ux_cols = buckets["scale"] + buckets["task"] + buckets["feedback"] + buckets["other"]
+        ux_note = ""
+        if ux_cols:
+            ux_note = (
+                "\n\nCOLUNAS DE UX RELEVANTES (foque os insights nestas):\n"
+                + ", ".join(f"'{c}'" for c in ux_cols[:20])
+            )
 
-Contexto informado pelo usuario: {context_info if context_info else "Analise geral de UX/usabilidade"}
+        user_message = f"""Analyze the following usability/UX data as a Senior UX Researcher.
+
+User-provided context: {context_info if context_info else "General UX/usability analysis"}
+{demo_meta_note}{ux_note}
 
 {observations}
 
---- DADOS PARA ANALISE ---
+--- DATA ---
 {data_str}
 
-Objetivo:
-- Gere uma analise rica em portugues, com 5 a 8 insights.
-- Cada insight deve ter descoberta, evidencia concreta e recomendacao detalhada.
-- Use os nomes das colunas, percentuais, contagens, medias e exemplos textuais quando existirem.
-- Evite insight generico. Se uma evidencia for fraca por amostra pequena, diga isso na propria descoberta ou recomendacao.
-- Retorne SOMENTE o JSON final."""
+Instructions:
+- Generate 5-8 UX insights in the same language as the data (Portuguese if data is in Portuguese).
+- Each insight must have a clear finding about the user experience, concrete evidence from the data, and a detailed actionable recommendation.
+- Use column names, percentages, means, and textual examples as evidence.
+- Do NOT create insights about demographic or metadata columns.
+- Return ONLY the final JSON object."""
 
         attempt_prompts = [user_message]
         retry_message = (
@@ -363,6 +516,7 @@ Objetivo:
                     prompt=prompt,
                     system=SYSTEM_PROMPT_EXCEL_ANALYZER,
                     stream=False,
+                    think=False,
                     format="json",
                     options={
                         "temperature": 0.1 if attempt == 1 else 0.0,
@@ -444,7 +598,27 @@ Objetivo:
         elif not isinstance(data.get("anomalies"), list):
             data["anomalies"] = []
         else:
-            data["anomalies"] = [str(item).strip() for item in data["anomalies"] if item is not None]
+            normalized_anomalies = []
+            for item in data["anomalies"]:
+                if item is None:
+                    continue
+                if isinstance(item, dict):
+                    # LLM returned {category, description} or {title, text} instead of a plain string
+                    parts = []
+                    for key in ("category", "title", "categoria", "titulo"):
+                        if item.get(key):
+                            parts.append(f"[{str(item[key]).strip()}]")
+                            break
+                    for key in ("description", "text", "descricao", "descricão", "finding", "detail"):
+                        if item.get(key):
+                            parts.append(str(item[key]).strip())
+                            break
+                    if not parts:
+                        parts = [str(v).strip() for v in item.values() if v]
+                    normalized_anomalies.append(" ".join(parts).strip())
+                else:
+                    normalized_anomalies.append(str(item).strip())
+            data["anomalies"] = [a for a in normalized_anomalies if a]
 
         score = data.get("overall_score")
         if isinstance(score, str):
@@ -473,172 +647,212 @@ Objetivo:
 
         return data
 
-    @staticmethod
+    @classmethod
     def _build_fallback_report(
+        cls,
         df: pd.DataFrame,
         context_info: str,
         error: Optional[Exception] = None,
     ) -> DataAnalysisReport:
-        """Create a useful Portuguese report when LLM output is invalid."""
+        """Build a UX-contextualised fallback when the LLM fails."""
         rows, cols = len(df), len(df.columns)
         missing_pct = float(df.isna().sum().sum() / (rows * cols) * 100) if rows and cols else 0.0
+        buckets = cls._split_columns_by_type(df)
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        text_cols = df.select_dtypes(include=["object", "string", "category", "bool"]).columns.tolist()
         insights: List[Insight] = []
 
-        status_cols = [
-            col for col in text_cols
-            if any(token in col.lower() for token in ("status", "resultado", "conclusao", "conclusão", "sucesso"))
-        ]
-        task_cols = [
-            col for col in text_cols
-            if any(token in col.lower() for token in ("tarefa", "task", "etapa", "fluxo"))
-        ]
-
-        for status_col in status_cols[:2]:
+        # --- 1. Task friction (status columns) ---
+        for status_col in buckets["task"][:3]:
             values = df[status_col].dropna().astype(str).map(str.strip)
             lower_values = values.str.lower()
-            difficulty_mask = lower_values.str.contains("dificuldade|nao realizado|não realizado|falha|erro|abandon", regex=True)
+            difficulty_mask = lower_values.str.contains(
+                r"dificuldade|nao realizado|não realizado|falha|erro|abandon|nao concluiu|não concluiu",
+                regex=True,
+            )
             difficulty_count = int(difficulty_mask.sum())
-            if difficulty_count:
-                pct = difficulty_count / len(values) * 100 if len(values) else 0
-                evidence = f"{difficulty_count} de {len(values)} registros em '{status_col}' indicam dificuldade, falha ou abandono ({pct:.1f}%)."
-                if task_cols:
-                    task_col = task_cols[0]
-                    affected_tasks = (
-                        df.loc[difficulty_mask.reindex(df.index, fill_value=False), task_col]
-                        .dropna()
-                        .astype(str)
-                        .value_counts()
-                        .head(3)
-                    )
-                    if not affected_tasks.empty:
-                        evidence += " Tarefas mais afetadas: " + ", ".join(
-                            f"{task}={count}" for task, count in affected_tasks.items()
-                        ) + "."
-                insights.append(
-                    Insight(
-                        category="Friccao de tarefa",
-                        finding="Ha um volume relevante de execucoes com dificuldade, falha ou abandono.",
-                        evidence=evidence,
-                        severity="High" if pct >= 35 else "Medium",
-                        recommendation=(
-                            "Priorizar a revisao das tarefas mais afetadas, observar gravacoes ou comentarios dessas sessoes "
-                            "e redesenhar os pontos onde o usuario perde orientacao, nao encontra a acao ou precisa de ajuda."
-                        ),
-                    )
-                )
-
-        if numeric_cols:
-            metrics = []
-            for col in numeric_cols:
-                values = df[col].dropna()
-                if not values.empty:
-                    metrics.append((col, float(values.mean()), values.min(), values.max(), float(values.median())))
-            for col, mean, min_value, max_value, median in sorted(metrics, key=lambda item: item[1])[:3]:
-                insights.append(
-                    Insight(
-                        category="Metrica quantitativa",
-                        finding=f"A coluna '{col}' merece atencao por apresentar media de {mean:.2f}.",
-                        evidence=f"{col}: media={mean:.2f}, mediana={median:.2f}, minimo={min_value}, maximo={max_value}.",
-                        severity="High" if mean <= 3 else "Medium",
-                        recommendation=(
-                            f"Filtrar os registros mais criticos de '{col}' e cruzar com comentarios abertos "
-                            "para entender se o problema vem de clareza, tempo, confianca ou dificuldade operacional."
-                        ),
-                    )
-                )
-
-        for col in text_cols[:14]:
-            normalized_col = col.lower()
-            if any(token in normalized_col for token in ("participante", "participant", "respondente", "nome", "email", "id")):
+            if not difficulty_count:
                 continue
+            pct = difficulty_count / len(values) * 100 if len(values) else 0
+            evidence = (
+                f"{difficulty_count} de {len(values)} registros em '{status_col}' "
+                f"indicam dificuldade, falha ou abandono ({pct:.1f}%)."
+            )
+            other_task_cols = [c for c in buckets["task"] if c != status_col]
+            if other_task_cols:
+                task_col = other_task_cols[0]
+                affected = (
+                    df.loc[difficulty_mask.reindex(df.index, fill_value=False), task_col]
+                    .dropna().astype(str).value_counts().head(3)
+                )
+                if not affected.empty:
+                    evidence += " Etapas mais afetadas: " + ", ".join(
+                        f"'{t}'={c}" for t, c in affected.items()
+                    ) + "."
+            insights.append(Insight(
+                category="Friccao de tarefa",
+                finding=(
+                    "Ha um volume expressivo de execucoes com dificuldade, falha ou abandono, "
+                    "indicando pontos criticos no fluxo do usuario."
+                ),
+                evidence=evidence,
+                severity="High" if pct >= 35 else "Medium",
+                recommendation=(
+                    "Revisar as etapas com maior taxa de falha usando gravacoes de sessao ou comentarios abertos. "
+                    "Identificar se o problema e de visibilidade da acao, vocabulario, fluxo ou falta de feedback "
+                    "do sistema e priorizar correccoes na proxima iteracao de design."
+                ),
+            ))
+
+        # --- 2. Satisfaction / scale signals ---
+        ux_numeric = [
+            c for c in numeric_cols
+            if cls._classify_column(c) not in ("demo", "meta")
+        ]
+        scale_metrics = []
+        for col in ux_numeric:
+            values = df[col].dropna()
+            if values.empty:
+                continue
+            scale_metrics.append((col, float(values.mean()), float(values.median()), values.min(), values.max()))
+        for col, mean, median, min_v, max_v in sorted(scale_metrics, key=lambda x: x[1])[:4]:
+            col_type = cls._classify_column(col)
+            is_scale = col_type == "scale"
+            score_max = 5.0 if max_v <= 5 else 10.0
+            low_threshold = score_max * 0.5
+            severity = "High" if mean <= low_threshold else "Medium"
+            if is_scale:
+                interpretation = (
+                    f"A media de {mean:.2f} em '{col}' esta abaixo do ponto medio da escala ({score_max/2:.1f}), "
+                    "sinalizando que usuarios avaliam negativamente esse aspecto da experiencia."
+                    if mean <= score_max / 2
+                    else f"A media de {mean:.2f} em '{col}' e moderada, com espaco relevante para melhoria."
+                )
+                insights.append(Insight(
+                    category="Avaliacao de usabilidade",
+                    finding=interpretation,
+                    evidence=f"'{col}': media={mean:.2f}, mediana={median:.2f}, min={min_v}, max={max_v} (escala ate {score_max:.0f}).",
+                    severity=severity,
+                    recommendation=(
+                        f"Investigar quais etapas ou caracteristicas do produto mais contribuem para a nota baixa em '{col}'. "
+                        "Cruzar com respostas abertas para entender causas especificas e testar mudancas em nova rodada."
+                    ),
+                ))
+            else:
+                insights.append(Insight(
+                    category="Metrica de desempenho",
+                    finding=f"O indicador '{col}' apresenta variacao relevante que pode refletir diferenca de experiencia entre participantes.",
+                    evidence=f"'{col}': media={mean:.2f}, mediana={median:.2f}, min={min_v}, max={max_v}.",
+                    severity=severity,
+                    recommendation=(
+                        f"Segmentar os participantes pelo valor de '{col}' e comparar com outros indicadores "
+                        "para identificar perfis com maior dificuldade ou menor engajamento."
+                    ),
+                ))
+            if len(insights) >= 5:
+                break
+
+        # --- 3. Open feedback ---
+        for col in buckets["feedback"][:4]:
+            values = df[col].dropna().astype(str).map(str.strip)
+            values = values[~values.str.lower().isin({"", "nan", "none", "null", "n/a", "na"})]
+            if values.empty or len(values) < 2:
+                continue
+            examples = " | ".join(values.head(3).map(lambda item: item[:110]).tolist())
+            insights.append(Insight(
+                category="Feedback qualitativo",
+                finding=(
+                    f"O campo '{col}' reune respostas abertas que revelam motivacoes, dores "
+                    "e expectativas dos participantes em linguagem propria."
+                ),
+                evidence=f"{len(values)} respostas validas em '{col}'. Exemplos: {examples}.",
+                severity="Medium",
+                recommendation=(
+                    f"Codificar as respostas de '{col}' em temas recorrentes (clareza, confianca, tempo, erro, "
+                    "expectativa, workaround) e priorizar os temas com maior frequencia no backlog de UX."
+                ),
+            ))
+            if len(insights) >= 7:
+                break
+
+        # --- 4. Categorical task patterns (non-demo, non-meta) ---
+        for col in (buckets["task"] + buckets["other"])[:8]:
+            if len(insights) >= 7:
+                break
             values = df[col].dropna().astype(str).map(str.strip)
             values = values[~values.str.lower().isin({"", "nan", "none", "null", "n/a", "na"})]
             if values.empty:
                 continue
             counts = values.value_counts()
+            if counts.size > 15 or int(counts.iloc[0]) < 2:
+                continue
             top_value = str(counts.index[0])
             top_count = int(counts.iloc[0])
             pct = top_count / len(values) * 100
-            unique_ratio = counts.size / len(values)
-            if counts.size <= 15 and top_count >= 2:
-                insights.append(
-                    Insight(
-                        category="Padrao recorrente",
-                        finding=f"'{top_value}' e o valor mais frequente em '{col}'.",
-                        evidence=f"{top_count} de {len(values)} respostas validas em '{col}' ({pct:.1f}%).",
-                        severity="High" if pct >= 60 else "Medium",
-                        recommendation=(
-                            f"Usar '{col}' como segmento de analise e comparar esse grupo com os demais para entender "
-                            "se o padrao representa sucesso, friccao ou uma necessidade especifica."
-                        ),
-                    )
-                )
-            elif unique_ratio >= 0.75 or values.str.len().mean() > 35:
-                examples = " | ".join(values.head(2).map(lambda item: item[:120]).tolist())
-                insights.append(
-                    Insight(
-                        category="Feedback aberto",
-                        finding=f"O campo aberto '{col}' concentra material qualitativo para extrair causas de friccao.",
-                        evidence=f"{len(values)} respostas validas. Exemplos: {examples}.",
-                        severity="Medium",
-                        recommendation=(
-                            f"Codificar manualmente as respostas de '{col}' em temas como clareza, confianca, tempo, erro "
-                            "e expectativa para priorizar melhorias com base em recorrencia."
-                        ),
-                    )
-                )
-            else:
-                continue
-            if len(insights) >= 6:
-                break
-
-        if missing_pct > 10:
-            insights.append(
-                Insight(
-                    category="Completude dos dados",
-                    finding="Ha dados ausentes suficientes para afetar a leitura de alguns padroes.",
-                    evidence=f"Percentual total de campos ausentes: {missing_pct:.1f}% em {rows} linhas e {cols} colunas.",
-                    severity="Medium" if missing_pct < 30 else "High",
-                    recommendation=(
-                        "Antes de tomar decisao final, verificar quais perguntas ou participantes concentram os vazios "
-                        "e separar ausencia real de resposta nao aplicavel."
+            if pct >= 40:
+                insights.append(Insight(
+                    category="Padrao comportamental",
+                    finding=(
+                        f"A maioria dos registros em '{col}' concentra-se em '{top_value}', "
+                        "o que pode indicar um perfil ou comportamento dominante na amostra."
                     ),
-                )
-            )
+                    evidence=f"{top_count} de {len(values)} respostas validas em '{col}' ({pct:.1f}%).",
+                    severity="Medium",
+                    recommendation=(
+                        f"Investigar se o grupo '{top_value}' em '{col}' apresenta comportamentos ou dificuldades "
+                        "diferentes dos demais segmentos e ajustar o design para atender melhor esse perfil."
+                    ),
+                ))
 
-        insights.append(
-            Insight(
-                category="Confiabilidade da IA",
-                finding="A IA local nao retornou JSON valido, entao esta analise foi montada por regras locais sobre os dados.",
-                evidence=f"Erro tecnico: {str(error)[:160] if error else 'resposta invalida da LLM'}.",
+        # --- 5. Missing data alert ---
+        if missing_pct > 10:
+            insights.append(Insight(
+                category="Completude dos dados",
+                finding="Ha dados ausentes em volume relevante, o que pode mascarar padroes importantes.",
+                evidence=f"{missing_pct:.1f}% de campos ausentes em {rows} registros e {cols} colunas.",
+                severity="Medium" if missing_pct < 30 else "High",
+                recommendation=(
+                    "Verificar quais perguntas ou participantes concentram os campos vazios. "
+                    "Separar respostas nao aplicaveis de recusas reais antes de concluir a analise."
+                ),
+            ))
+
+        # --- 6. AI reliability notice (always last) ---
+        insights.append(Insight(
+            category="Analise gerada localmente",
+            finding=(
+                "A IA local nao conseguiu processar a analise, portanto os insights foram gerados "
+                "por uma camada de regras descritivas sobre os dados. Os resultados sao direcionais."
+            ),
+            evidence=f"Erro: {str(error)[:180] if error else 'resposta invalida da LLM'}.",
+            severity="Low",
+            recommendation=(
+                f"Reexecutar a analise apos liberar memoria RAM (o modelo {cls.__name__} precisa de ~3.7 GB livres). "
+                "Enquanto isso, use esta versao como triagem e valide os pontos criticos na aba de visualizacoes."
+            ),
+        ))
+
+        if len(insights) < 5:
+            insights.append(Insight(
+                category="Perfil da amostra",
+                finding="A base combina sinais quantitativos e qualitativos que devem ser analisados em conjunto.",
+                evidence=(
+                    f"{len(ux_numeric)} colunas numericas de UX detectadas, "
+                    f"{len(buckets['feedback'])} campos de feedback aberto, "
+                    f"{len(buckets['task'])} colunas de tarefa/status."
+                ),
                 severity="Low",
                 recommendation=(
-                    "Reexecutar a analise apos confirmar que o modelo qwen3:4b esta carregado; use esta versao como "
-                    "triagem inicial e valide os pontos criticos na aba de visualizacoes."
+                    "Cruzar as metricas numericas com os comentarios abertos para transformar "
+                    "sintomas quantitativos em causas identificaveis e priorizaveis no backlog de UX."
                 ),
-            )
-        )
-
-        while len(insights) < 5:
-            insights.append(
-                Insight(
-                    category="Perfil do dataset",
-                    finding="A base combina sinais estruturados e respostas textuais que devem ser analisados em conjunto.",
-                    evidence=f"Foram detectadas {len(numeric_cols)} colunas numericas e {len(text_cols)} colunas textuais/categoricas.",
-                    severity="Low",
-                    recommendation=(
-                        "Cruzar metricas numericas com comentarios para transformar sintomas quantitativos em causas de UX."
-                    ),
-                )
-            )
-        insights = insights[:8]
+            ))
+        insights = list({ins.finding: ins for ins in insights}.values())[:8]
 
         summary = (
-            f"A analise identificou {rows} registros e {cols} colunas, com {missing_pct:.1f}% de campos ausentes. "
-            f"Como a resposta da IA local veio invalida, os insights abaixo foram gerados por uma camada local de "
-            f"analise descritiva. Contexto considerado: {context_info or 'analise geral de UX/usabilidade'}."
+            f"Analise de {rows} registros e {cols} colunas com {missing_pct:.1f}% de ausencias. "
+            f"Como a IA local nao retornou resposta valida, os insights foram gerados por analise descritiva automatica. "
+            f"Contexto: {context_info or 'analise geral de UX/usabilidade'}. "
+            f"Recomenda-se reexecutar a analise com o modelo carregado para resultados mais ricos."
         )
         anomalies = []
         if missing_pct > 30:
