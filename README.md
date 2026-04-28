@@ -145,8 +145,18 @@ ux_analysis_pipeline/
 
 A pasta `samples/` contém exemplos dos dois principais cenários suportados:
 
-- `Teste_Usabilidade_*.xlsx`
-- `Mapeamento_Perfil_*.xlsx`
+- Testes de usabilidade:
+  - `Teste_Usabilidade_Analise_Logs.xlsx`
+  - `Teste_Usabilidade_Deploy_Automatizado.xlsx`
+  - `Teste_Usabilidade_Gestao_BancoDados.xlsx`
+  - `Teste_Usabilidade_Gestao_Incidentes.xlsx`
+  - `Teste_Usabilidade_Monitoramento_Cloud.xlsx`
+- Mapeamentos de perfil:
+  - `Mapeamento_Perfil_Analise_Logs.xlsx`
+  - `Mapeamento_Perfil_Deploy_Automatizado.xlsx`
+  - `Mapeamento_Perfil_Gestao_BancoDados.xlsx`
+  - `Mapeamento_Perfil_Gestao_Incidentes.xlsx`
+  - `Mapeamento_Perfil_Monitoramento_Cloud.xlsx`
 
 Esses arquivos servem como referência para validar extração de tarefas, tempos, classificações, perfil da amostra, notas e temas recorrentes.
 
