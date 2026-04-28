@@ -25,7 +25,7 @@ def normalize_text(value: str) -> str:
 
 
 def clean_display_text(value: Any, fallback: str = "N/A") -> str:
-
+    """Return user-facing text without leaking pandas null markers."""
     if pd.isna(value):
         return fallback
     text = str(value).strip()

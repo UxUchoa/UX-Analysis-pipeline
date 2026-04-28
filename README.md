@@ -31,7 +31,7 @@ O backend detecta automaticamente o tipo de base:
 ### Análise com IA Local
 
 - Geração de resumo executivo, insights, evidências, severidade, anomalias e recomendações.
-- Uso do Ollama local com o modelo `qwen3:4b`.
+- Uso do Ollama local com o modelo `qwen2.5`.
 - Normalização e fallback para respostas inválidas do LLM.
 - Dados processados localmente.
 
@@ -45,7 +45,7 @@ React + Vite + Recharts + Lucide
 FastAPI + Pandas + Pydantic
         |
         v
-Ollama local - qwen3:4b
+Ollama local - qwen2.5
 ```
 
 ## Pré-requisitos
@@ -53,7 +53,7 @@ Ollama local - qwen3:4b
 - Python 3.9+
 - Node.js 18+
 - Ollama instalado e rodando localmente
-- Modelo `qwen3:4b` disponível no Ollama
+- Modelo `qwen2.5` disponível no Ollama
 
 ## Instalação
 
@@ -69,7 +69,7 @@ cd frontend
 npm install
 cd ..
 
-ollama pull qwen3:4b
+ollama pull qwen2.5
 ```
 
 ## Como Rodar
@@ -145,18 +145,8 @@ ux_analysis_pipeline/
 
 A pasta `samples/` contém exemplos dos dois principais cenários suportados:
 
-- Testes de usabilidade:
-  - `Teste_Usabilidade_Analise_Logs.xlsx`
-  - `Teste_Usabilidade_Deploy_Automatizado.xlsx`
-  - `Teste_Usabilidade_Gestao_BancoDados.xlsx`
-  - `Teste_Usabilidade_Gestao_Incidentes.xlsx`
-  - `Teste_Usabilidade_Monitoramento_Cloud.xlsx`
-- Mapeamentos de perfil:
-  - `Mapeamento_Perfil_Analise_Logs.xlsx`
-  - `Mapeamento_Perfil_Deploy_Automatizado.xlsx`
-  - `Mapeamento_Perfil_Gestao_BancoDados.xlsx`
-  - `Mapeamento_Perfil_Gestao_Incidentes.xlsx`
-  - `Mapeamento_Perfil_Monitoramento_Cloud.xlsx`
+- `Teste_Usabilidade_*.xlsx`
+- `Mapeamento_Perfil_*.xlsx`
 
 Esses arquivos servem como referência para validar extração de tarefas, tempos, classificações, perfil da amostra, notas e temas recorrentes.
 
@@ -169,7 +159,7 @@ Esses arquivos servem como referência para validar extração de tarefas, tempo
 | Ícones | Lucide React |
 | Backend | FastAPI |
 | Dados | Pandas, NumPy, OpenPyXL |
-| IA local | Ollama, qwen3:4b |
+| IA local | Ollama, qwen2.5 |
 | Validação | Pydantic |
 
 ## Licença

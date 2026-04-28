@@ -96,37 +96,11 @@ CORRECT EXAMPLE OUTPUT (copy the structure, not the content):
 CRITICAL: Return ONLY a single valid JSON object with REAL values. No markdown. No extra text.
 If the data is qualitative (interview text), still return the same JSON structure summarizing the main themes."""
 
-REPORT_JSON_SCHEMA: Dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "summary": {"type": "string"},
-        "key_insights": {
-            "type": "array",
-            "minItems": 3,
-            "maxItems": 5,
-            "items": {
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string"},
-                    "finding": {"type": "string"},
-                    "evidence": {"type": "string"},
-                    "severity": {"type": "string", "enum": ["Low", "Medium", "High", "Critical"]},
-                    "recommendation": {"type": "string"},
-                },
-                "required": ["category", "finding", "evidence", "severity", "recommendation"],
-            },
-        },
-        "anomalies": {"type": "array", "items": {"type": "string"}},
-        "overall_score": {"type": "integer", "minimum": 1, "maximum": 10},
-    },
-    "required": ["summary", "key_insights", "anomalies", "overall_score"],
-}
-
 
 class UXExcelAnalyzer:
     """Engine for analyzing structured UX data from Excel using local LLM."""
 
-    def __init__(self, model_name: str = "qwen3:4b", ollama_host: str = "http://localhost:11434"):
+    def __init__(self, model_name: str = "qwen2.5", ollama_host: str = "http://localhost:11434"):
         self.model_name = model_name
         self.ollama_host = ollama_host
         self.client = None
@@ -245,55 +219,6 @@ class UXExcelAnalyzer:
         cleaned = cleaned.dropna(axis=1, how="all")
         return cleaned
 
-    @staticmethod
-    def _get_response_text(response: Any) -> str:
-        """Read Ollama responses across dict-like and typed client versions."""
-        if isinstance(response, dict):
-            return str(response.get("response", "")).strip()
-        return str(getattr(response, "response", "")).strip()
-
-    @staticmethod
-    def _strip_reasoning_blocks(text: str) -> str:
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-        text = text.replace("```", "")
-        return text.strip()
-
-    @staticmethod
-    def _extract_json_object(text: str) -> Dict[str, Any]:
-        """Extract the first balanced JSON object from a possibly noisy response."""
-        cleaned = UXExcelAnalyzer._strip_reasoning_blocks(text)
-        if not cleaned:
-            raise ValueError("LLM returned an empty response.")
-
-        start = cleaned.find("{")
-        if start == -1:
-            raise ValueError(f"LLM response did not contain a JSON object: {cleaned[:180]}")
-
-        depth = 0
-        in_string = False
-        escaped = False
-        for idx, char in enumerate(cleaned[start:], start=start):
-            if escaped:
-                escaped = False
-                continue
-            if char == "\\":
-                escaped = True
-                continue
-            if char == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    return json.loads(cleaned[start : idx + 1])
-
-        raise ValueError(f"LLM response contained incomplete JSON: {cleaned[:180]}")
-
     def analyze_data(self, df: pd.DataFrame, context_info: str = "") -> Optional[DataAnalysisReport]:
         """Analyze DataFrame with local LLM and validate with Pydantic."""
         if not self.client:
@@ -323,17 +248,15 @@ Context: {context_info if context_info else "General usability test metrics"}
 
 {data_str}
 
-Generate a concise but evidence-based UX analysis based ONLY on this data.
-Prefer 3 strong insights over broad generic statements.
-Each evidence field must cite a column name, a count, a percentage, or a concrete value from the supplied data.
+Generate a comprehensive analysis report based ONLY on this data.
 Return ONLY the JSON object."""
 
         attempt_prompts = [user_message]
         retry_message = (
             user_message
-            + "\n\nYour previous answer was invalid. You MUST return ONLY a JSON object with these exact keys: "
+            + "\n\nYour previous answer was invalid. You MUST return a JSON object with these exact keys: "
             "summary (string), key_insights (list of objects), anomalies (list of strings), overall_score (integer 1-10). "
-            "Use simple strings. DO NOT return markdown, reasoning, field types, or descriptions."
+            "DO NOT return field types or descriptions. RETURN REAL VALUES based on the data."
         )
         attempt_prompts.append(retry_message)
 
@@ -346,17 +269,19 @@ Return ONLY the JSON object."""
                     prompt=prompt,
                     system=SYSTEM_PROMPT_EXCEL_ANALYZER,
                     stream=False,
-                    think=False,
-                    format=REPORT_JSON_SCHEMA,
-                    options={
-                        "temperature": 0.0 if attempt > 1 else 0.1,
-                        "top_p": 0.8,
-                        "num_ctx": 8192,
-                        "num_predict": 1800,
-                    },
+                    format="json",
+                    options={"temperature": 0.2, "top_p": 0.9, "num_ctx": 8192},
                 )
-                response_text = self._get_response_text(response)
-                json_data = self._extract_json_object(response_text)
+                response_text = str(response.get("response", "")).strip()
+
+                json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    json_str = re.sub(r"```json\n?", "", response_text)
+                    json_str = re.sub(r"```\n?", "", json_str).strip()
+
+                json_data = json.loads(json_str)
                 json_data = self._normalize_llm_output(json_data)
                 report = DataAnalysisReport(**json_data)
                 logger.info("Analysis report generated successfully")
@@ -378,9 +303,6 @@ Return ONLY the JSON object."""
             data["key_insights"] = [data["key_insights"]]
 
         if isinstance(data.get("key_insights"), list):
-            data["key_insights"] = [
-                insight for insight in data["key_insights"] if isinstance(insight, dict)
-            ]
             for insight in data["key_insights"]:
                 if isinstance(insight, dict):
                     # Common alternative output from local models.
@@ -394,36 +316,12 @@ Return ONLY the JSON object."""
                         insight["severity"] = "Medium"
                     if "recommendation" not in insight:
                         insight["recommendation"] = "Review this finding with the UX team."
-                    for field in ("category", "finding", "evidence", "severity", "recommendation"):
+                    for field in ("category", "finding", "evidence", "severity"):
                         if isinstance(insight.get(field), dict):
                             insight[field] = json.dumps(insight[field], ensure_ascii=False)
-                        elif insight.get(field) is None:
-                            insight[field] = ""
-                        else:
-                            insight[field] = str(insight[field]).strip()
-                    severity = insight.get("severity", "").lower()
-                    severity_map = {
-                        "low": "Low",
-                        "medium": "Medium",
-                        "moderate": "Medium",
-                        "high": "High",
-                        "critical": "Critical",
-                        "baixo": "Low",
-                        "media": "Medium",
-                        "médio": "Medium",
-                        "alta": "High",
-                        "alto": "High",
-                        "critico": "Critical",
-                        "crítico": "Critical",
-                    }
-                    insight["severity"] = severity_map.get(severity, "Medium")
 
         if isinstance(data.get("anomalies"), str):
             data["anomalies"] = [data["anomalies"]]
-        elif not isinstance(data.get("anomalies"), list):
-            data["anomalies"] = []
-        else:
-            data["anomalies"] = [str(item) for item in data["anomalies"] if item is not None]
 
         score = data.get("overall_score")
         if isinstance(score, str):
@@ -432,10 +330,6 @@ Return ONLY the JSON object."""
         if isinstance(score, float):
             data["overall_score"] = int(round(score))
         if data.get("overall_score") is None:
-            data["overall_score"] = 5
-        try:
-            data["overall_score"] = max(1, min(10, int(data["overall_score"])))
-        except (TypeError, ValueError):
             data["overall_score"] = 5
         if not data.get("key_insights"):
             data["key_insights"] = [
@@ -462,72 +356,25 @@ Return ONLY the JSON object."""
         rows, cols = len(df), len(df.columns)
         missing_pct = float(df.isna().sum().sum() / (rows * cols) * 100) if rows and cols else 0.0
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        text_cols = df.select_dtypes(include=["object", "string", "category", "bool"]).columns.tolist()
 
-        insights: List[Insight] = []
-
-        if numeric_cols:
-            scored_cols = []
-            for col in numeric_cols:
-                values = df[col].dropna()
-                if values.empty:
-                    continue
-                scored_cols.append((col, float(values.mean()), values.min(), values.max()))
-            if scored_cols:
-                col, mean, min_value, max_value = sorted(scored_cols, key=lambda item: item[1])[0]
-                insights.append(
-                    Insight(
-                        category="Quantitative signal",
-                        finding=f"The lowest average numeric metric is '{col}', which may indicate the main friction area.",
-                        evidence=f"{col}: mean={mean:.2f}, min={min_value}, max={max_value}.",
-                        severity="High" if mean <= 3 else "Medium",
-                        recommendation=f"Review rows where '{col}' is below the average and compare them with participant comments.",
-                    )
-                )
-
-        for col in text_cols[:8]:
-            values = df[col].dropna().astype(str).map(str.strip)
-            values = values[~values.str.lower().isin({"", "nan", "none", "null", "n/a", "na"})]
-            if values.empty:
-                continue
-            counts = values.value_counts()
-            top_value = counts.index[0]
-            top_count = int(counts.iloc[0])
-            if top_count >= 2 and counts.size <= 12:
-                pct = top_count / len(values) * 100
-                insights.append(
-                    Insight(
-                        category="Categorical pattern",
-                        finding=f"The most frequent value in '{col}' is '{top_value}'.",
-                        evidence=f"{top_count} of {len(values)} valid responses ({pct:.1f}%).",
-                        severity="Medium" if pct >= 50 else "Low",
-                        recommendation=f"Use '{col}' as a segmentation field when reviewing the detailed responses.",
-                    )
-                )
-                break
-
-        insights.append(
+        insights: List[Insight] = [
             Insight(
                 category="Data Quality",
                 finding="Local fallback report was used because LLM output was not schema-compliant.",
                 evidence=f"Rows={rows}, Cols={cols}, Missing={missing_pct:.1f}%",
                 severity="Medium",
-                recommendation="Use a smaller sample, add concise context, or retry after freeing system memory.",
-            )
-        )
-
-        while len(insights) < 3:
-            insights.append(
-                Insight(
-                    category="Dataset Profile",
-                    finding="Dataset appears to contain interview-style text fields."
-                    if len(numeric_cols) <= 2
-                    else "Dataset contains mixed quantitative and qualitative fields.",
-                    evidence=f"Numeric columns detected: {len(numeric_cols)}; text/categorical columns detected: {len(text_cols)}.",
-                    severity="Low",
-                    recommendation="Use the Visualizations tab to cross-check these AI findings with deterministic summaries.",
-                )
-            )
+                recommendation="Use a smaller sample or tighter context when analyzing long qualitative interviews.",
+            ),
+            Insight(
+                category="Dataset Profile",
+                finding="Dataset appears to contain interview-style text fields."
+                if len(numeric_cols) <= 2
+                else "Dataset contains mixed quantitative and qualitative fields.",
+                evidence=f"Numeric columns detected: {len(numeric_cols)}",
+                severity="Low",
+                recommendation="Use the Visualizations tab for qualitative summaries and theme ranking.",
+            ),
+        ]
 
         summary = (
             f"Fallback analysis generated for {rows} records and {cols} columns."
@@ -659,7 +506,7 @@ def main() -> None:
     excel_path = str(base_dir / "sample_ux_data.xlsx")
     create_sample_excel(excel_path)
 
-    analyzer = UXExcelAnalyzer(model_name="qwen3:4b")
+    analyzer = UXExcelAnalyzer(model_name="qwen2.5")
     df = analyzer.load_excel(excel_path)
     report = analyzer.analyze_data(
         df,
