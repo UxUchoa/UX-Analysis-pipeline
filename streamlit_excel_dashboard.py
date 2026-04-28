@@ -203,7 +203,7 @@ t = TRANSLATIONS[selected_lang]
 
 
 if "analyzer" not in st.session_state:
-    st.session_state.analyzer = UXExcelAnalyzer(model_name="qwen2.5")
+    st.session_state.analyzer = UXExcelAnalyzer(model_name="qwen3:4b")
 if "df" not in st.session_state:
     st.session_state.df = None
 if "report" not in st.session_state:

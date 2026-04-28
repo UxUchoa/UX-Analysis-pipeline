@@ -66,7 +66,7 @@ _state: dict[str, Any] = {
     "filename": None,
 }
 
-_analyzer = UXExcelAnalyzer(model_name="qwen2.5")
+_analyzer = UXExcelAnalyzer(model_name="qwen3:4b")
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ O backend detecta automaticamente o tipo de base:
 ### Análise com IA Local
 
 - Geração de resumo executivo, insights, evidências, severidade, anomalias e recomendações.
-- Uso do Ollama local com o modelo `qwen2.5`.
+- Uso do Ollama local com o modelo `qwen3:4b`.
 - Normalização e fallback para respostas inválidas do LLM.
 - Dados processados localmente.
 
@@ -45,7 +45,7 @@ React + Vite + Recharts + Lucide
 FastAPI + Pandas + Pydantic
         |
         v
-Ollama local - qwen2.5
+Ollama local - qwen3:4b
 ```
 
 ## Pré-requisitos
@@ -53,7 +53,7 @@ Ollama local - qwen2.5
 - Python 3.9+
 - Node.js 18+
 - Ollama instalado e rodando localmente
-- Modelo `qwen2.5` disponível no Ollama
+- Modelo `qwen3:4b` disponível no Ollama
 
 ## Instalação
 
@@ -69,7 +69,7 @@ cd frontend
 npm install
 cd ..
 
-ollama pull qwen2.5
+ollama pull qwen3:4b
 ```
 
 ## Como Rodar
@@ -159,7 +159,7 @@ Esses arquivos servem como referência para validar extração de tarefas, tempo
 | Ícones | Lucide React |
 | Backend | FastAPI |
 | Dados | Pandas, NumPy, OpenPyXL |
-| IA local | Ollama, qwen2.5 |
+| IA local | Ollama, qwen3:4b |
 | Validação | Pydantic |
 
 ## Licença
