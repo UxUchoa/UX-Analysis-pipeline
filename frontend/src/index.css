@@ -100,6 +100,21 @@ body {
   min-height: 100vh;
 }
 
+/* Recharts tooltip text needs explicit overrides; contentStyle alone does not
+   affect every generated label/value element. */
+.recharts-tooltip-wrapper,
+.recharts-default-tooltip {
+  color: var(--text-primary) !important;
+}
+
+.recharts-tooltip-label,
+.recharts-tooltip-item,
+.recharts-tooltip-item-name,
+.recharts-tooltip-item-separator,
+.recharts-tooltip-item-value {
+  color: var(--text-primary) !important;
+}
+
 #root {
   min-height: 100vh;
 }
