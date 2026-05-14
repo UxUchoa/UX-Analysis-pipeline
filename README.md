@@ -57,47 +57,124 @@ Ollama local - qwen3:4b
 
 ## Instalação
 
+Faça estes passos apenas na primeira vez que for preparar o projeto.
+
+1. Entre na pasta do projeto:
+
 ```bash
-cd ux_analysis_pipeline
+cd UX-Analysis-pipeline
+```
 
+2. Crie o ambiente virtual do Python:
+
+```bash
 python -m venv .venv
+```
+
+3. Ative o ambiente virtual:
+
+```bash
 .venv\Scripts\activate
+```
 
+Se o comando deu certo, o terminal deve mostrar `(.venv)` no começo da linha.
+
+4. Instale as dependências do backend:
+
+```bash
 pip install -r backend/requirements.txt
+```
 
+5. Instale as dependências do frontend:
+
+```bash
 cd frontend
 npm install
 cd ..
+```
 
+6. Baixe o modelo local usado pela IA:
+
+```bash
 ollama pull qwen3:4b
 ```
 
 ## Como Rodar
 
-Inicie o Ollama:
+Para usar o app, deixe 3 terminais abertos ao mesmo tempo.
+
+### Terminal 1: Ollama
+
+Inicie o servidor local do Ollama:
 
 ```bash
 ollama serve
 ```
 
-Inicie o backend:
+Deixe esse terminal aberto. Se aparecer uma mensagem dizendo que a porta já está em uso, provavelmente o Ollama já está rodando.
+
+### Terminal 2: Backend
+
+Na raiz do projeto, ative o ambiente virtual:
+
+```bash
+.venv\Scripts\activate
+```
+
+Depois inicie a API:
 
 ```bash
 python -m uvicorn backend.main:app --reload --port 8000
 ```
 
-Inicie o frontend:
+O backend deve ficar disponível em:
+
+```text
+http://localhost:8000
+```
+
+Para testar rapidamente:
+
+```text
+http://localhost:8000/api/health
+```
+
+### Terminal 3: Frontend
+
+Entre na pasta do frontend:
 
 ```bash
 cd frontend
+```
+
+Inicie a interface:
+
+```bash
 npm run dev
 ```
 
-Acesse:
+Acesse o app no navegador:
 
 ```text
 http://localhost:5173
 ```
+
+## Rodar de Novo Depois
+
+Depois que a instalação já foi feita uma vez, o fluxo diário é só:
+
+1. Abrir o Ollama com `ollama serve`.
+2. Abrir o backend com `.venv\Scripts\activate` e `python -m uvicorn backend.main:app --reload --port 8000`.
+3. Abrir o frontend com `cd frontend` e `npm run dev`.
+4. Entrar em `http://localhost:5173`.
+
+## Problemas Comuns
+
+- **`ollama` não é reconhecido**: instale o Ollama e abra um novo terminal.
+- **Modelo não encontrado**: rode `ollama pull qwen3:4b`.
+- **`python` não é reconhecido**: instale Python 3.9+ e marque a opção de adicionar ao PATH.
+- **`npm` não é reconhecido**: instale Node.js 18+ e abra um novo terminal.
+- **Frontend abre, mas não carrega dados**: confirme se o backend está rodando na porta `8000`.
 
 ## Fluxo de Uso
 

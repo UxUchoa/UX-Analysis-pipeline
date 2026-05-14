@@ -2,7 +2,7 @@
 Data processing utilities for UX Analysis Pipeline.
 Extracted from the Streamlit dashboard for reuse by the FastAPI backend.
 """
-
+    
 from __future__ import annotations
 
 import re
